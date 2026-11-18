@@ -1,6 +1,0 @@
-entrypoint = "server.py"
-run = "python server.py --hosted"
-
-[[ports]]
-localPort = 8000
-externalPort = 80
