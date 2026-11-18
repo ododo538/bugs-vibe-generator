@@ -192,7 +192,8 @@ function generate(){const box=$('links');box.replaceChildren();built={};
  if(!list.length){toast('먼저 곡을 담아 주세요');return;}
  if(list.some(e=>P.some(p=>e.st[p]==='load'))){toast('아직 곡을 찾는 중이에요. 잠시 후 다시 눌러 주세요');return;}
  P.forEach(p=>{const ids=list.map(e=>e.ids[p]).filter(Boolean);
-  const parts=SPLIT_DUP.includes(p)?chunks(ids):[ids];const urls=parts.map(x=>link(p,x)).filter(Boolean);
+  const split=SPLIT_DUP.includes(p)&&!(p==='melon'&&device==='ios'); /* 아이폰 멜론은 중복곡도 한 링크에 담김 */
+  const parts=split?chunks(ids):[ids];const urls=parts.map(x=>link(p,x)).filter(Boolean);
   if(urls.length>1){built[p]=urls;
    const c=el('div','lk');const top=el('div','top');top.append(el('span',CLS[p],'● '+NAME[p]),el('span','cnt',ids.length+'/'+list.length+'곡 · 링크 '+urls.length+'개'));c.append(top);
    const miss=list.filter(e=>!e.ids[p]).length,chk=list.filter(e=>e.ids[p]&&e.st[p]==='check').length;
