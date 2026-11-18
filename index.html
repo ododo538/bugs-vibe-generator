@@ -101,9 +101,15 @@ function load(){try{const d=JSON.parse(localStorage.getItem(STORE)||'{}');if(Arr
  list.forEach(e=>P.forEach(p=>{if(e.st&&e.st[p]==='load')e.st[p]=e.ids[p]?'ok':'none';}));}
 function cleanArtist(a){return String(a||'').split(',')[0].replace(/\s*\(.*?\)\s*/g,' ').trim();}
 
+/* 벅스는 Render(미국)에서 막혀서 Supabase 서울 리전 함수로 검색 */
+const BUGS_FN='https://ltsoiovkwdafiljwzxiq.supabase.co/functions/v1/bugs-search';
+const SB_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0c29pb3Zrd2RhZmlsand6eGlxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM4MjI5NzcsImV4cCI6MjEwOTM5ODk3N30.9ssW7o8RVrgqn9w6o8RRMGWr4OGUtSDzHFYNUH-2oDM';
 async function api(service,title,artist){
- const u='/api/search?service='+service+'&title='+encodeURIComponent(title)+'&artist='+encodeURIComponent(artist||'');
- const r=await fetch(u);let j={};try{j=await r.json();}catch(e){}
+ const qs='title='+encodeURIComponent(title)+'&artist='+encodeURIComponent(artist||'');
+ const r=service==='bugs'
+  ?await fetch(BUGS_FN+'?'+qs+'&forceFunctionRegion=ap-northeast-2',{headers:{Authorization:'Bearer '+SB_ANON,apikey:SB_ANON}})
+  :await fetch('/api/search?service='+service+'&'+qs);
+ let j={};try{j=await r.json();}catch(e){}
  if(!r.ok)throw new Error(j.error||('검색 실패 ('+r.status+')'));
  return j;
 }
