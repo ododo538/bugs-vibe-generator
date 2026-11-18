@@ -178,11 +178,25 @@ function link(p,ids){if(!ids.length)return null;const c=ids.join(',');
  if(p==='vibe')return device==='pc'?null:`vibe://listen?version=3&trackIds=${c}`;
  if(p==='flo')return device==='pc'?null:`flomusic://play/public?type=track&ids=${c}`;
  return null;}
+/* 같은 곡이 한 링크에 두 번 들어가면 안 담기는 플랫폼: 겹치기 직전에서 링크를 나눔 */
+const SPLIT_DUP=['melon','vibe'];
+function chunks(ids){const out=[];let cur=[];for(const id of ids){if(cur.includes(id)){out.push(cur);cur=[];}cur.push(id);}if(cur.length)out.push(cur);return out;}
 let built={};
 function generate(){const box=$('links');box.replaceChildren();built={};
  if(!list.length){toast('먼저 곡을 담아 주세요');return;}
  if(list.some(e=>P.some(p=>e.st[p]==='load'))){toast('아직 곡을 찾는 중이에요. 잠시 후 다시 눌러 주세요');return;}
- P.forEach(p=>{const ids=list.map(e=>e.ids[p]).filter(Boolean);const url=link(p,ids);built[p]=url;
+ P.forEach(p=>{const ids=list.map(e=>e.ids[p]).filter(Boolean);
+  const parts=SPLIT_DUP.includes(p)?chunks(ids):[ids];const urls=parts.map(x=>link(p,x)).filter(Boolean);
+  if(urls.length>1){built[p]=urls;
+   const c=el('div','lk');const top=el('div','top');top.append(el('span',CLS[p],'● '+NAME[p]),el('span','cnt',ids.length+'/'+list.length+'곡 · 링크 '+urls.length+'개'));c.append(top);
+   const miss=list.filter(e=>!e.ids[p]).length,chk=list.filter(e=>e.ids[p]&&e.st[p]==='check').length;
+   if(miss)c.append(el('div','warnline','빠진 곡 '+miss+'곡 — 리스트에서 '+NAME[p]+' 표시를 눌러 채워 주세요.'));
+   if(chk)c.append(el('div','warnline','확인 필요 '+chk+'곡'));
+   c.append(el('div','warnline','중복곡이 있어 링크를 나눴어요. 1번부터 순서대로 하나씩 눌러 주세요.'));
+   urls.forEach((u,i)=>{const acts=el('div','acts');const open=el('a','btn primary',(i+1)+'번 열기 ('+parts[i].length+'곡)');open.href=u;if(u.startsWith('http')){open.target='_blank';open.rel='noopener noreferrer';}
+    const cp=el('button','',(i+1)+'번 복사');cp.type='button';cp.addEventListener('click',()=>copy(u));acts.append(open,cp);c.append(acts);});
+   box.append(c);return;}
+  const url=urls[0]||null;built[p]=url;
   const c=el('div','lk');const top=el('div','top');const nm=el('span',CLS[p],'● '+NAME[p]);top.append(nm,el('span','cnt',ids.length+'/'+list.length+'곡'));c.append(top);
   const miss=list.filter(e=>!e.ids[p]).length,chk=list.filter(e=>e.ids[p]&&e.st[p]==='check').length;
   if(miss)c.append(el('div','warnline','빠진 곡 '+miss+'곡 — 리스트에서 '+NAME[p]+' 표시를 눌러 채워 주세요.'));
@@ -194,7 +208,7 @@ function generate(){const box=$('links');box.replaceChildren();built={};
  $('copyAllWrap').style.display=Object.values(built).some(Boolean)?'block':'none';}
 async function copy(t){try{await navigator.clipboard.writeText(t);toast('복사했어요');}catch(e){const a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.left='-9999px';document.body.append(a);a.select();const ok=document.execCommand('copy');a.remove();toast(ok?'복사했어요':'복사가 안 돼요. 직접 선택해 복사해 주세요');}}
 $('generate').addEventListener('click',generate);
-$('copyAll').addEventListener('click',()=>copy(P.filter(p=>built[p]).map(p=>NAME[p]+'\n'+built[p]).join('\n\n')));
+$('copyAll').addEventListener('click',()=>copy(P.filter(p=>built[p]).map(p=>Array.isArray(built[p])?built[p].map((u,i)=>NAME[p]+' '+(i+1)+'번\n'+u).join('\n'):NAME[p]+'\n'+built[p]).join('\n\n')));
 document.querySelectorAll('[data-device]').forEach(b=>b.addEventListener('click',()=>{device=b.dataset.device;save();document.querySelectorAll('[data-device]').forEach(x=>x.classList.toggle('on',x===b));if($('links').childElementCount)generate();}));
 
 load();renderChips();renderList();document.querySelectorAll('[data-device]').forEach(x=>x.classList.toggle('on',x.dataset.device===device));
