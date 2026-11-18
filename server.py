@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hosted streaming-link builder for Bugs and VIBE. No third-party packages."""
+"""Hosted streaming-link builder for Melon, Genie, Bugs, VIBE and FLO. No third-party packages."""
 from __future__ import annotations
 
 from html.parser import HTMLParser
@@ -46,13 +46,28 @@ def is_allowed_request(address: str) -> bool:
 
 
 
-def get_text(url: str, *, vibe: bool = False) -> str:
-    headers = {'User-Agent': UA, 'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
-               'Referer': 'https://vibe.naver.com/' if vibe else 'https://music.bugs.co.kr/'}
+REFERERS = {
+    'bugs': 'https://music.bugs.co.kr/',
+    'vibe': 'https://vibe.naver.com/',
+    'melon': 'https://www.melon.com/',
+    'genie': 'https://www.genie.co.kr/',
+    'flo': 'https://www.music-flo.com/',
+}
+
+
+def get_text(url: str, *, vibe: bool = False, service: str = '', json_api: bool = False) -> str:
     if vibe:
-        headers['Accept'] = 'application/json'
+        service, json_api = 'vibe', True
+    service = service or 'bugs'
+    headers = {'User-Agent': UA, 'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+               'Referer': REFERERS.get(service, 'https://music.bugs.co.kr/')}
+    if json_api:
+        headers['Accept'] = 'application/json, text/javascript, */*;q=0.1'
     else:
         headers['Accept'] = 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8'
+    if service == 'flo':
+        headers['x-gm-app-name'] = 'FLO_WEB'
+        headers['x-gm-device-id'] = 'web'
     req = Request(url, headers=headers)
     with NETWORK_SLOTS:
         with urlopen(req, timeout=13) as resp:
@@ -229,6 +244,125 @@ def search_vibe(query: str) -> list[dict]:
     return items
 
 
+def html_unescape(text: str) -> str:
+    from html import unescape
+    return unescape(text or '')
+
+
+def strip_tags(fragment: str) -> str:
+    text = re.sub(r'<[^>]+>', ' ', fragment or '')
+    text = html_unescape(text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def search_melon(query: str) -> list[dict]:
+    """Melon song search page (HTML). Falls back to the keyword JSON used by the search box."""
+    url = 'https://www.melon.com/search/song/index.htm?q=' + quote(query, safe='') + '&section=song'
+    items = []
+    try:
+        page = get_text(url, service='melon')
+    except (URLError, HTTPError, TimeoutError, OSError):
+        page = ''
+    for chunk in re.split(r'<tr[\s>]', page)[1:]:
+        m = (re.search(r'name="input_check"[^>]*value="(\d{4,15})"', chunk)
+             or re.search(r'value="(\d{4,15})"[^>]*name="input_check"', chunk)
+             or re.search(r'playSong\(\s*[\'"]?\d+[\'"]?\s*,\s*[\'"]?(\d{4,15})', chunk))
+        if not m:
+            continue
+        sid = m.group(1)
+        t = re.search(r'<a[^>]*class="fc_gray"[^>]*>(.*?)</a>', chunk, re.S)
+        title = strip_tags(t.group(1)) if t else ''
+        if not title:
+            t = re.search(r'title="([^"]+?) 곡 선택"', chunk)
+            title = html_unescape(t.group(1)) if t else ''
+        artists = [strip_tags(x) for x in re.findall(r'goArtistDetail[^>]*>(.*?)</a>', chunk, re.S)]
+        album = re.search(r'goAlbumDetail[^>]*>(.*?)</a>', chunk, re.S)
+        if title:
+            items.append({'id': sid, 'title': title,
+                          'artist': ', '.join(dict.fromkeys(a for a in artists if a)),
+                          'album': strip_tags(album.group(1)) if album else '',
+                          'url': f'https://www.melon.com/song/detail.htm?songId={sid}'})
+    if items:
+        return items
+    raw = get_text('https://www.melon.com/search/keyword/index.json?query=' + quote(query, safe=''),
+                   service='melon', json_api=True).strip()
+    m = re.match(r'^[\w$.]+\((.*)\)\s*;?\s*$', raw, re.S)  # JSONP wrapper
+    payload = json.loads(m.group(1) if m else raw)
+    for song in payload.get('SONGCONTENTS') or []:
+        sid = str(song.get('SONGID') or '')
+        if re.fullmatch(r'\d{4,15}', sid):
+            items.append({'id': sid, 'title': html_unescape(song.get('SONGNAME') or ''),
+                          'artist': html_unescape(song.get('ARTISTNAME') or ''),
+                          'album': html_unescape(song.get('ALBUMNAME') or ''),
+                          'url': f'https://www.melon.com/song/detail.htm?songId={sid}'})
+    return items
+
+
+def search_genie(query: str) -> list[dict]:
+    url = 'https://www.genie.co.kr/search/searchSong?query=' + quote(query, safe='')
+    page = get_text(url, service='genie')
+    items = []
+    for chunk in re.split(r'<tr\s', page)[1:]:
+        m = re.search(r'songid="(\d{4,15})"', chunk, re.I)
+        if not m:
+            continue
+        sid = m.group(1)
+        t = re.search(r'<a[^>]*class="title ellipsis"[^>]*>(.*?)</a>', chunk, re.S)
+        title = strip_tags(re.sub(r'<span[^>]*class="icon[^"]*"[^>]*>.*?</span>', ' ', t.group(1), flags=re.S)) if t else ''
+        a = re.search(r'<a[^>]*class="artist ellipsis"[^>]*>(.*?)</a>', chunk, re.S)
+        al = re.search(r'<a[^>]*class="albumtitle ellipsis"[^>]*>(.*?)</a>', chunk, re.S)
+        if title:
+            items.append({'id': sid, 'title': title, 'artist': strip_tags(a.group(1)) if a else '',
+                          'album': strip_tags(al.group(1)) if al else '',
+                          'url': f'https://www.genie.co.kr/detail/songInfo?xgnm={sid}'})
+    return items
+
+
+def find_flo_tracks(node) -> list[dict]:
+    if isinstance(node, dict):
+        lst = node.get('list')
+        if isinstance(lst, list) and lst and isinstance(lst[0], dict) and 'artistList' in lst[0]:
+            return lst
+        for value in node.values():
+            found = find_flo_tracks(value)
+            if found:
+                return found
+    if isinstance(node, list):
+        for value in node:
+            found = find_flo_tracks(value)
+            if found:
+                return found
+    return []
+
+
+def search_flo(query: str) -> list[dict]:
+    url = ('https://www.music-flo.com/api/search/v2/search?keyword=' + quote(query, safe='')
+           + '&searchType=TRACK&sortType=ACCURACY&size=20&page=1')
+    payload = json.loads(get_text(url, service='flo', json_api=True))
+    items = []
+    for song in find_flo_tracks(payload):
+        sid = str(song.get('id') or '')
+        if not re.fullmatch(r'\d{1,15}', sid):
+            continue
+        album = song.get('album') or {}
+        items.append({'id': sid, 'title': song.get('name') or '',
+                      'artist': artist_name([{'name': x.get('name')} for x in song.get('artistList') or [] if isinstance(x, dict)]),
+                      'album': album.get('title', '') if isinstance(album, dict) else '',
+                      'url': f'https://www.music-flo.com/detail/track/{sid}/details'})
+    return items
+
+
+SEARCHERS = {'melon': search_melon, 'genie': search_genie, 'bugs': search_bugs,
+             'vibe': search_vibe, 'flo': search_flo}
+SEARCH_PAGES = {
+    'melon': 'https://www.melon.com/search/song/index.htm?q=',
+    'genie': 'https://www.genie.co.kr/search/searchSong?query=',
+    'bugs': 'https://music.bugs.co.kr/search/track?q=',
+    'vibe': 'https://vibe.naver.com/search?query=',
+    'flo': 'https://www.music-flo.com/search/all?keyword=',
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write('[%s] %s\n' % (self.log_date_time_string(), fmt % args))
@@ -245,8 +379,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlsplit(self.path)
-        if url.path in ('/', '/index.html'):
-            body = (ROOT / 'index.html').read_bytes()
+        if url.path in ('/', '/index.html', '/old', '/old.html'):
+            page = 'old.html' if url.path.startswith('/old') else 'index.html'
+            body = (ROOT / page).read_bytes()
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('X-Content-Type-Options', 'nosniff')
@@ -280,22 +415,23 @@ class Handler(BaseHTTPRequestHandler):
         service = (args.get('service') or [''])[0]
         title = (args.get('title') or [''])[0].strip()[:120]
         artist = (args.get('artist') or [''])[0].strip()[:120]
-        if service not in ('bugs', 'vibe') or not title or len(title) < 1:
+        if service not in SEARCHERS or not title or len(title) < 1:
             self.respond(400, {'error': '서비스 또는 곡명을 확인해 주세요.'})
             return
         query = (title + ' ' + artist).strip()
         try:
-            getter = search_bugs if service == 'bugs' else search_vibe
+            getter = SEARCHERS[service]
             result = getter(query)
             # Combined queries can be too strict for source search algorithms.
             if not result and artist:
                 result = getter(title)
+            short_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', title).strip()
+            if not result and short_title and short_title != title:
+                result = getter(short_title)
             matches, review = rank_results(result, title, artist)
             self.respond(200, {'service': service, 'results': matches,
                                'review': review, 'query': query,
-                               'search_url': ('https://music.bugs.co.kr/search/track?q='
-                                              + quote(query) if service == 'bugs'
-                                              else 'https://vibe.naver.com/')})
+                               'search_url': SEARCH_PAGES[service] + quote(query)})
         except (URLError, HTTPError, TimeoutError, OSError) as exc:
             self.respond(502, {'error': '음원 서비스 연결 실패. 잠시 후 재검색하거나 곡 주소/ID를 직접 입력해 주세요.',
                                'detail': str(exc)[:160]})
@@ -317,7 +453,7 @@ def start():
         print('포트 8765~8784를 사용할 수 없습니다. 다른 프로그램을 종료한 뒤 다시 실행해 주세요.')
         raise SystemExit(1)
     url = f'http://127.0.0.1:{server.server_address[1]}/'
-    print('\n' + '=' * 64 + '\n  벅스 · 바이브 곡명 자동 검색 / 원클릭 링크 생성기\n'
+    print('\n' + '=' * 64 + '\n  멜론·지니·벅스·바이브·플로 곡 검색 / 원클릭 링크 생성기\n'
           + '=' * 64 + '\n')
     print('  웹 주소:', url)
     print('  종료: 이 검은 창에서 Ctrl + C\n')
