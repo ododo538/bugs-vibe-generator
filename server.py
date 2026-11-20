@@ -379,8 +379,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlsplit(self.path)
-        if url.path in ('/', '/index.html', '/old', '/old.html'):
-            page = 'old.html' if url.path.startswith('/old') else 'index.html'
+        if url.path in ('/', '/index.html', '/old', '/old.html', '/play', '/play.html'):
+            page = ('old.html' if url.path.startswith('/old')
+                    else 'play.html' if url.path.startswith('/play') else 'index.html')
             body = (ROOT / page).read_bytes()
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
